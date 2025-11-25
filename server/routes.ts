@@ -328,8 +328,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (message.type === 'auth' && message.userId) {
           userId = message.userId;
-          wsClients.set(userId, ws);
-          console.log(`User ${userId} authenticated on WebSocket`);
+          if (userId) {
+            wsClients.set(userId, ws);
+            console.log(`User ${userId} authenticated on WebSocket`);
+          }
         }
       } catch (error) {
         console.error('WebSocket message error:', error);
