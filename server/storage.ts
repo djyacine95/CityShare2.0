@@ -104,7 +104,7 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(items.category, filters.category));
     }
 
-    // In a real app with PostGIS, we would filter by distance here
+    
     
     const query = db.select().from(items);
     
@@ -128,7 +128,7 @@ export class DatabaseStorage implements IStorage {
   async createItem(insertItem: InsertItem): Promise<Item> {
     const [item] = await db.insert(items).values(insertItem).returning();
     
-    // NEW: Update the user's "Items Listed" count automatically!
+  
     const userItems = await this.getUserItems(insertItem.ownerId);
     await this.updateUser(insertItem.ownerId, { itemsListed: userItems.length });
 
@@ -168,7 +168,7 @@ export class DatabaseStorage implements IStorage {
 
   // Messages
   async getConversations(userId: string): Promise<{ userId: string, username: string, lastMessage: Message }[]> {
-    // This is a simplified version. In a real app, you'd use a more complex join
+
     const allMessages = await db.select().from(messages).where(
       or(eq(messages.senderId, userId), eq(messages.receiverId, userId))
     ).orderBy(desc(messages.createdAt));
