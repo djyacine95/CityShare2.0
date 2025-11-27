@@ -51,9 +51,7 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // -------------------------------------------------------------------
-  // 3. API Routes (The "Safety Net" - Listen to ALL variations)
-  // -------------------------------------------------------------------
+ 
 
   // STATUS: Check if logged in
   app.get("/api/auth/user", (req, res) => {
@@ -61,13 +59,13 @@ export function setupAuth(app: Express) {
     res.json(req.user);
   });
 
-  // LOGIN: Listen to BOTH common addresses
+ 
   const handleLogin = (req: Request, res: Response) => res.status(200).json(req.user);
   
   app.post("/api/login", passport.authenticate("local"), handleLogin);       // Option A
   app.post("/api/auth/login", passport.authenticate("local"), handleLogin);  // Option B
 
-  // REGISTER: Listen to BOTH common addresses
+
   const handleRegister = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const existingUser = await db.select().from(users).where(eq(users.username, req.body.username));
