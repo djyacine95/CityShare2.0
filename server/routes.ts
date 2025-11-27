@@ -6,13 +6,13 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertItemSchema, insertBookingSchema, insertMessageSchema, insertRatingSchema, insertWishlistSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware
-  setupAuth(app); // (Removed 'await' as setupAuth is synchronous in our new version)
+
+  setupAuth(app); 
 
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id instead of .claims.sub
+      
       const userId = req.user.id; 
       const user = await storage.getUser(userId);
       res.json(user);
@@ -22,9 +22,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== ITEM ROUTES ==========
-  
-  // Get all items (with optional filters)
+
   app.get("/api/items", async (req, res) => {
     try {
       const { search, category, limit, maxDistance, verifiedOnly } = req.query;
@@ -56,7 +54,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get user's items
   app.get("/api/items/my-items", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+  
       const userId = req.user.id;
       const items = await storage.getUserItems(userId);
       res.json(items);
@@ -83,7 +81,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create item
   app.post("/api/items", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+    
       const userId = req.user.id;
       const validated = insertItemSchema.parse({ ...req.body, ownerId: userId });
       const item = await storage.createItem(validated);
@@ -94,7 +92,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update item
+
   app.patch("/api/items/:id", isAuthenticated, async (req, res) => {
     try {
       const item = await storage.updateItem(req.params.id, req.body);
@@ -119,12 +117,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== BOOKING ROUTES ==========
+
   
   // Get user's bookings
   app.get("/api/bookings", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+   
       const userId = req.user.id;
       const bookings = await storage.getBookingsByUser(userId);
       res.json(bookings);
@@ -137,7 +135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create booking
   app.post("/api/bookings", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+ 
       const userId = req.user.id;
       const validated = insertBookingSchema.parse({ ...req.body, borrowerId: userId });
       const booking = await storage.createBooking(validated);
@@ -163,12 +161,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== MESSAGE ROUTES ==========
   
   // Get conversations
   app.get("/api/conversations", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+  
       const userId = req.user.id;
       const conversations = await storage.getConversations(userId);
       res.json(conversations);
@@ -192,13 +189,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create message
   app.post("/api/messages", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+  
       const userId = req.user.id;
       const validated = insertMessageSchema.parse({ ...req.body, senderId: userId });
       const message = await storage.createMessage(validated);
       
-      // Broadcast to WebSocket clients
-      // Ensure we convert IDs to strings for the Map keys
+
       if (wsClients.has(String(validated.receiverId))) {
         const receiverSocket = wsClients.get(String(validated.receiverId));
         if (receiverSocket && receiverSocket.readyState === WebSocket.OPEN) {
@@ -213,7 +209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== RATING ROUTES ==========
+
   
   // Get user ratings
   app.get("/api/ratings/user/:userId", async (req, res) => {
@@ -229,7 +225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create rating
   app.post("/api/ratings", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+  
       const userId = req.user.id;
       const validated = insertRatingSchema.parse({ ...req.body, raterId: userId });
       const rating = await storage.createRating(validated);
@@ -240,12 +236,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== WISHLIST ROUTES ==========
-  
-  // Get user's wishlist
+
   app.get("/api/wishlist", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+  
       const userId = req.user.id;
       const wishlistItems = await storage.getWishlistByUser(userId);
       res.json(wishlistItems);
@@ -271,7 +265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Add to wishlist
   app.post("/api/wishlist", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+     
       const userId = req.user.id;
       const validated = insertWishlistSchema.parse({ ...req.body, userId });
       const wishlistItem = await storage.addToWishlist(validated);
@@ -285,7 +279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Remove from wishlist
   app.delete("/api/wishlist/:itemId", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+  
       const userId = req.user.id;
       await storage.removeFromWishlist(userId, req.params.itemId);
       res.json({ success: true });
@@ -298,7 +292,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update wishlist alerts
   app.patch("/api/wishlist/:itemId", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+
       const userId = req.user.id;
       const { alertsEnabled } = req.body;
       await storage.updateWishlistAlerts(userId, req.params.itemId, alertsEnabled);
@@ -309,12 +303,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== IMPACT ROUTES ==========
-  
+
   // Get user's impact stats
   app.get("/api/impact/stats", isAuthenticated, async (req: any, res) => {
     try {
-      // FIX: Use .id
+
       const userId = req.user.id;
       const stats = await storage.getUserImpactStats(userId);
       res.json(stats);
@@ -324,10 +317,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ========== WEBSOCKET SETUP ==========
+
   const httpServer = createServer(app);
   
-  // WebSocket server for real-time messaging
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   const wsClients = new Map<string, WebSocket>();
 
