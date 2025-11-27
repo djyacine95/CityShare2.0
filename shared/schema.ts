@@ -14,7 +14,7 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Session storage table (required for Express Session)
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -28,12 +28,12 @@ export const sessions = pgTable(
 // User storage table 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  // --- ADDED THESE 3 COLUMNS TO FIX THE ERROR ---
+
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   isAdmin: boolean("is_admin").default(false),
-  // ----------------------------------------------
-  email: varchar("email"), // Removed unique constraint temporarily to avoid conflicts if empty
+
+  email: varchar("email"), 
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
