@@ -19,10 +19,7 @@ export function Header() {
   const [location, setLocation] = useLocation();
   const [searchValue, setSearchValue] = useState("");
 
-  // FIX: Smarter initials logic
-  // 1. Try First Name + Last Name
-  // 2. If missing, use the first letter of Username
-  // 3. Fallback to 'U'
+
   const userInitials = (() => {
     if (user?.firstName && user?.lastName) {
       return `${user.firstName[0]}${user.lastName[0]}`.toUpperCase();
@@ -84,7 +81,7 @@ export function Header() {
           </nav>
         </div>
 
-        {/* MIDDLE: Search Bar (Added back based on previous request) */}
+        {/* MIDDLE: Search Bar */}
         <div className="flex-1 max-w-sm hidden lg:block">
            <form onSubmit={handleSearch} className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
