@@ -1,14 +1,11 @@
 import { defineConfig } from "drizzle-kit";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
-}
-
 export default defineConfig({
   out: "./migrations",
   schema: "./shared/schema.ts",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL,
+    // PASTE YOUR REAL NEON URL INSIDE THE QUOTES BELOW:
+    url: "postgresql://neondb_owner:npg_FiXwcx25Abfj@ep-round-bonus-ad8c2m9m-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
   },
 });

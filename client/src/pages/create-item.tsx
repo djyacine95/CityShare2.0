@@ -29,10 +29,17 @@ import { CATEGORIES } from "@/lib/categories";
 import { insertItemSchema } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import type { z } from "zod";
+import { z } from "zod";
 
-const formSchema = insertItemSchema.extend({
-  location: insertItemSchema.shape.location.default(""),
+// FIX: We exclude ownerId (server handles it) and images (handled manually)
+const formSchema = insertItemSchema.omit({ 
+  ownerId: true, 
+  images: true 
+}).extend({
+  location: z.string().min(1, "Location is required"),
+  title: z.string().min(1, "Title is required"),
+  description: z.string().min(1, "Description is required"),
+  category: z.string().min(1, "Category is required"),
 });
 
 type FormData = z.infer<typeof formSchema>;
@@ -50,17 +57,13 @@ export default function CreateItem() {
       description: "",
       category: "tools",
       location: user?.location || "",
-      images: [],
-      ownerId: user?.id || "",
     },
   });
 
+  // Pre-fill location if user has one
   useEffect(() => {
-    if (user) {
-      form.setValue("ownerId", user.id);
-      if (user.location && !form.getValues("location")) {
-        form.setValue("location", user.location);
-      }
+    if (user && user.location && !form.getValues("location")) {
+      form.setValue("location", user.location);
     }
   }, [user, form]);
 
@@ -72,13 +75,14 @@ export default function CreateItem() {
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/auth"; // FIX: Redirect to /auth, not /api/login
       }, 500);
     }
   }, [isAuthenticated, authLoading, toast]);
 
   const createItemMutation = useMutation({
     mutationFn: async (data: FormData) => {
+      console.log("Submitting Data:", data); // Debug log
       const response = await apiRequest("POST", "/api/items", {
         ...data,
         images: imageUrls,
@@ -93,15 +97,9 @@ export default function CreateItem() {
       setLocation("/");
     },
     onError: (error: Error) => {
+      console.error("Submission Error:", error);
       if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
+        window.location.href = "/auth";
         return;
       }
       toast({
@@ -115,11 +113,8 @@ export default function CreateItem() {
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-
-    // For now, create temporary URLs for the images
-    // In a real app, you'd upload to a server/storage
     const urls = Array.from(files).map(file => URL.createObjectURL(file));
-    setImageUrls(prev => [...prev, ...urls].slice(0, 5)); // Max 5 images
+    setImageUrls(prev => [...prev, ...urls].slice(0, 5));
   };
 
   const removeImage = (index: number) => {
@@ -137,7 +132,6 @@ export default function CreateItem() {
           variant="ghost"
           onClick={() => setLocation("/")}
           className="mb-6"
-          data-testid="button-back"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back
@@ -153,7 +147,8 @@ export default function CreateItem() {
 
           <Card className="p-6">
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              <form onSubmit={form.handleSubmit(onSubmit, (errors) => console.log("Form Errors:", errors))} className="space-y-6">
+                
                 {/* Title */}
                 <FormField
                   control={form.control}
@@ -162,11 +157,7 @@ export default function CreateItem() {
                     <FormItem>
                       <FormLabel>Title *</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="e.g., Power Drill, Camping Tent, Camera Lens"
-                          {...field}
-                          data-testid="input-title"
-                        />
+                        <Input placeholder="e.g., Power Drill" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -182,7 +173,7 @@ export default function CreateItem() {
                       <FormLabel>Category *</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
-                          <SelectTrigger data-testid="select-category">
+                          <SelectTrigger>
                             <SelectValue placeholder="Select a category" />
                           </SelectTrigger>
                         </FormControl>
@@ -207,11 +198,10 @@ export default function CreateItem() {
                     <FormItem>
                       <FormLabel>Description *</FormLabel>
                       <FormControl>
-                        <Textarea
-                          placeholder="Describe the item, its condition, and any important details..."
-                          className="min-h-32"
-                          {...field}
-                          data-testid="textarea-description"
+                        <Textarea 
+                          placeholder="Describe the item..." 
+                          className="min-h-32" 
+                          {...field} 
                         />
                       </FormControl>
                       <FormMessage />
@@ -227,11 +217,7 @@ export default function CreateItem() {
                     <FormItem>
                       <FormLabel>Location *</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="e.g., San Jose, CA"
-                          {...field}
-                          data-testid="input-location"
-                        />
+                        <Input placeholder="e.g., San Jose, CA" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -251,7 +237,6 @@ export default function CreateItem() {
                           size="icon"
                           className="absolute top-2 right-2 h-6 w-6 rounded-full"
                           onClick={() => removeImage(index)}
-                          data-testid={`button-remove-image-${index}`}
                         >
                           <X className="h-3 w-3" />
                         </Button>
@@ -267,24 +252,19 @@ export default function CreateItem() {
                           multiple
                           className="hidden"
                           onChange={handleImageUpload}
-                          data-testid="input-image-upload"
                         />
                       </label>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Add up to 5 images to help others see your item
-                  </p>
                 </div>
 
-                {/* Submit */}
+                {/* Submit Buttons */}
                 <div className="flex gap-4 pt-4">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => setLocation("/")}
                     className="flex-1"
-                    data-testid="button-cancel"
                   >
                     Cancel
                   </Button>
@@ -292,7 +272,6 @@ export default function CreateItem() {
                     type="submit"
                     className="flex-1"
                     disabled={createItemMutation.isPending}
-                    data-testid="button-submit"
                   >
                     {createItemMutation.isPending ? "Creating..." : "List Item"}
                   </Button>

@@ -15,7 +15,7 @@ export default function Landing() {
             <span className="font-heading text-xl font-bold">CityShare</span>
           </div>
           <Button asChild data-testid="button-login">
-            <a href="/api/login">Log In</a>
+            <a href="/auth">Log In</a>
           </Button>
         </div>
       </header>
@@ -47,7 +47,7 @@ export default function Landing() {
                 asChild
                 data-testid="button-get-started"
               >
-                <a href="/api/login">Get Started</a>
+                <a href="/auth">Get Started</a>
               </Button>
               <Button 
                 size="lg" 
@@ -201,7 +201,7 @@ export default function Landing() {
             asChild
             data-testid="button-join-now"
           >
-            <a href="/api/login">Join CityShare Today</a>
+            <a href="/auth">Join CityShare Today</a>
           </Button>
         </div>
       </section>

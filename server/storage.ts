@@ -1,441 +1,277 @@
-// Based on Replit Auth blueprint + CityShare custom storage
-import {
-  users,
-  items,
-  bookings,
-  messages,
-  ratings,
-  wishlist,
-  impactStats,
-  type User,
-  type UpsertUser,
-  type Item,
-  type InsertItem,
-  type Booking,
-  type InsertBooking,
-  type Message,
-  type InsertMessage,
-  type Rating,
-  type InsertRating,
-  type WishlistItem,
-  type InsertWishlist,
-  type ImpactStats,
-} from "@shared/schema";
+import { users, items, bookings, messages, ratings, wishlist, impactStats } from "@shared/schema";
+import type { User, InsertUser, Item, InsertItem, Booking, InsertBooking, Message, InsertMessage, Rating, InsertRating, WishlistItem, InsertWishlist, ImpactStats } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, or, sql } from "drizzle-orm";
-import { randomUUID } from "crypto";
+import { eq, ilike, or, and, desc, sql } from "drizzle-orm";
+import session from "express-session";
+import connectPg from "connect-pg-simple";
+import { pool } from "./db";
+
+const PostgresSessionStore = connectPg(session);
 
 export interface IStorage {
-  // User operations (required for Replit Auth)
+  // User operations
   getUser(id: string): Promise<User | undefined>;
-  upsertUser(user: UpsertUser): Promise<User>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
   
   // Item operations
-  getItem(id: string): Promise<(Item & { owner?: User }) | undefined>;
-  getItems(filters?: { search?: string; category?: string; maxDistance?: number; verifiedOnly?: boolean; limit?: number }): Promise<(Item & { owner?: User })[]>;
-  getUserItems(userId: string): Promise<(Item & { owner?: User })[]>;
+  getItem(id: string): Promise<Item | undefined>;
+  getItems(filters?: { search?: string, category?: string, limit?: number, maxDistance?: number, verifiedOnly?: boolean }): Promise<Item[]>;
+  getUserItems(userId: string): Promise<Item[]>;
   createItem(item: InsertItem): Promise<Item>;
-  updateItem(id: string, item: Partial<InsertItem>): Promise<Item | undefined>;
-  deleteItem(id: string): Promise<boolean>;
-  
+  updateItem(id: string, item: Partial<Item>): Promise<Item | undefined>;
+  deleteItem(id: string): Promise<void>;
+
   // Booking operations
   getBooking(id: string): Promise<Booking | undefined>;
   getBookingsByUser(userId: string): Promise<Booking[]>;
-  getBookingsByItem(itemId: string): Promise<Booking[]>;
   createBooking(booking: InsertBooking): Promise<Booking>;
   updateBookingStatus(id: string, status: string): Promise<Booking | undefined>;
-  
+
   // Message operations
-  getMessage(id: string): Promise<Message | undefined>;
-  getConversationMessages(conversationId: string): Promise<(Message & { sender?: User; receiver?: User })[]>;
-  getConversations(userId: string): Promise<any[]>;
+  getConversations(userId: string): Promise<{ userId: string, username: string, lastMessage: Message }[]>;
+  getConversationMessages(conversationId: string): Promise<Message[]>;
   createMessage(message: InsertMessage): Promise<Message>;
-  markMessageAsRead(id: string): Promise<boolean>;
-  
+
   // Rating operations
-  getRating(id: string): Promise<Rating | undefined>;
-  getUserRatings(userId: string): Promise<(Rating & { rater?: User })[]>;
+  getUserRatings(userId: string): Promise<Rating[]>;
   createRating(rating: InsertRating): Promise<Rating>;
-  updateUserRating(userId: string): Promise<void>;
-  
+
   // Wishlist operations
-  getWishlistByUser(userId: string): Promise<(WishlistItem & { item?: Item & { owner?: User } })[]>;
+  getWishlistByUser(userId: string): Promise<(WishlistItem & { item: Item })[]>;
   checkWishlist(userId: string, itemId: string): Promise<boolean>;
-  addToWishlist(wishlistItem: InsertWishlist): Promise<WishlistItem>;
-  removeFromWishlist(userId: string, itemId: string): Promise<boolean>;
-  updateWishlistAlerts(userId: string, itemId: string, alertsEnabled: boolean): Promise<boolean>;
-  
+  addToWishlist(item: InsertWishlist): Promise<WishlistItem>;
+  removeFromWishlist(userId: string, itemId: string): Promise<void>;
+  updateWishlistAlerts(userId: string, itemId: string, enabled: boolean): Promise<void>;
+
   // Impact operations
   getUserImpactStats(userId: string): Promise<ImpactStats | undefined>;
-  updateImpactStats(userId: string, updates: Partial<Omit<ImpactStats, 'id' | 'userId'>>): Promise<void>;
+  
+  sessionStore: session.Store;
 }
 
 export class DatabaseStorage implements IStorage {
-  // User operations
+  sessionStore: session.Store;
+
+  constructor() {
+    this.sessionStore = new PostgresSessionStore({
+      pool,
+      createTableIfMissing: true,
+    });
+  }
+
+  // Users
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
   }
 
-  async upsertUser(userData: UpsertUser): Promise<User> {
-    const [user] = await db
-      .insert(users)
-      .values(userData)
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          ...userData,
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
     return user;
   }
 
-  // Item operations
-  async getItem(id: string): Promise<(Item & { owner?: User }) | undefined> {
-    const [result] = await db
-      .select()
-      .from(items)
-      .leftJoin(users, eq(items.ownerId, users.id))
-      .where(eq(items.id, id));
-    
-    if (!result) return undefined;
-    
-    return {
-      ...result.items,
-      owner: result.users || undefined,
-    };
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db.insert(users).values(insertUser).returning();
+    return user;
   }
 
-  async getItems(filters?: { search?: string; category?: string; maxDistance?: number; verifiedOnly?: boolean; limit?: number }): Promise<(Item & { owner?: User })[]> {
-    const limit = filters?.limit || 50;
-    
-    // Build the base query
-    let query = db
-      .select()
-      .from(items)
-      .leftJoin(users, eq(items.ownerId, users.id))
-      .where(sql`1=1`)
-      .orderBy(desc(items.createdAt))
-      .limit(limit);
+  async updateUser(id: string, userUpdate: Partial<User>): Promise<User | undefined> {
+    const [user] = await db.update(users).set(userUpdate).where(eq(users.id, id)).returning();
+    return user;
+  }
 
-    const results = await query;
+  // Items
+  async getItem(id: string): Promise<Item | undefined> {
+    const [item] = await db.select().from(items).where(eq(items.id, id));
+    return item;
+  }
+
+  async getItems(filters?: { search?: string, category?: string, limit?: number, maxDistance?: number, verifiedOnly?: boolean }): Promise<Item[]> {
+    let conditions = [];
     
-    // Apply filters in-memory (in production, you'd do this in SQL)
-    let filteredResults = results;
-    
-    // Category filter
-    if (filters?.category && filters.category !== 'all') {
-      filteredResults = filteredResults.filter(r => r.items.category === filters.category);
-    }
-    
-    // Distance filter
-    if (filters?.maxDistance !== undefined && filters.maxDistance > 0) {
-      filteredResults = filteredResults.filter(r => {
-        // If distance is not set, include the item (assume it's within range)
-        if (!r.items.distance) return true;
-        return r.items.distance <= filters.maxDistance!;
-      });
-    }
-    
-    // Verified owners filter
-    if (filters?.verifiedOnly) {
-      filteredResults = filteredResults.filter(r => r.users?.isVerified === true);
-    }
-    
-    // Search filter
     if (filters?.search) {
-      const searchLower = filters.search.toLowerCase();
-      filteredResults = filteredResults.filter(r => 
-        r.items.title.toLowerCase().includes(searchLower) ||
-        r.items.description.toLowerCase().includes(searchLower)
+      conditions.push(
+        or(
+          ilike(items.title, `%${filters.search}%`),
+          ilike(items.description, `%${filters.search}%`)
+        )
       );
     }
     
-    return filteredResults.map(r => ({
-      ...r.items,
-      owner: r.users || undefined,
-    }));
+    if (filters?.category && filters.category !== "All Categories") {
+      conditions.push(eq(items.category, filters.category));
+    }
+
+    // In a real app with PostGIS, we would filter by distance here
+    
+    const query = db.select().from(items);
+    
+    if (conditions.length > 0) {
+      query.where(and(...conditions));
+    }
+    
+    query.orderBy(desc(items.createdAt));
+    
+    if (filters?.limit) {
+      query.limit(filters.limit);
+    }
+    
+    return await query;
   }
 
-  async getUserItems(userId: string): Promise<(Item & { owner?: User })[]> {
-    const results = await db
-      .select()
-      .from(items)
-      .leftJoin(users, eq(items.ownerId, users.id))
-      .where(eq(items.ownerId, userId))
-      .orderBy(desc(items.createdAt));
-    
-    return results.map(r => ({
-      ...r.items,
-      owner: r.users || undefined,
-    }));
+  async getUserItems(userId: string): Promise<Item[]> {
+    return await db.select().from(items).where(eq(items.ownerId, userId)).orderBy(desc(items.createdAt));
   }
 
-  async createItem(itemData: InsertItem): Promise<Item> {
-    const id = randomUUID();
-    const [item] = await db.insert(items).values({ id, ...itemData }).returning();
+  async createItem(insertItem: InsertItem): Promise<Item> {
+    const [item] = await db.insert(items).values(insertItem).returning();
     
-    // Update user's items listed count
-    await db
-      .update(users)
-      .set({ itemsListed: sql`${users.itemsListed} + 1` })
-      .where(eq(users.id, itemData.ownerId));
-    
+    // NEW: Update the user's "Items Listed" count automatically!
+    const userItems = await this.getUserItems(insertItem.ownerId);
+    await this.updateUser(insertItem.ownerId, { itemsListed: userItems.length });
+
     return item;
   }
 
-  async updateItem(id: string, itemData: Partial<InsertItem>): Promise<Item | undefined> {
-    const [item] = await db
-      .update(items)
-      .set({ ...itemData, updatedAt: new Date() })
-      .where(eq(items.id, id))
-      .returning();
+  async updateItem(id: string, itemUpdate: Partial<Item>): Promise<Item | undefined> {
+    const [item] = await db.update(items).set(itemUpdate).where(eq(items.id, id)).returning();
     return item;
   }
 
-  async deleteItem(id: string): Promise<boolean> {
-    const result = await db.delete(items).where(eq(items.id, id));
-    return true;
+  async deleteItem(id: string): Promise<void> {
+    await db.delete(items).where(eq(items.id, id));
   }
 
-  // Booking operations
+  // Bookings
   async getBooking(id: string): Promise<Booking | undefined> {
     const [booking] = await db.select().from(bookings).where(eq(bookings.id, id));
     return booking;
   }
 
   async getBookingsByUser(userId: string): Promise<Booking[]> {
-    const results = await db
-      .select()
-      .from(bookings)
-      .where(or(eq(bookings.borrowerId, userId), eq(bookings.ownerId, userId)))
-      .orderBy(desc(bookings.createdAt));
-    return results;
+    return await db.select().from(bookings).where(
+      or(eq(bookings.borrowerId, userId), eq(bookings.ownerId, userId))
+    ).orderBy(desc(bookings.createdAt));
   }
 
-  async getBookingsByItem(itemId: string): Promise<Booking[]> {
-    const results = await db
-      .select()
-      .from(bookings)
-      .where(eq(bookings.itemId, itemId))
-      .orderBy(desc(bookings.createdAt));
-    return results;
-  }
-
-  async createBooking(bookingData: InsertBooking): Promise<Booking> {
-    const id = randomUUID();
-    const [booking] = await db.insert(bookings).values({ id, ...bookingData }).returning();
-    
-    // Update user's items borrowed count
-    await db
-      .update(users)
-      .set({ itemsBorrowed: sql`${users.itemsBorrowed} + 1` })
-      .where(eq(users.id, bookingData.borrowerId));
-    
+  async createBooking(insertBooking: InsertBooking): Promise<Booking> {
+    const [booking] = await db.insert(bookings).values(insertBooking).returning();
     return booking;
   }
 
   async updateBookingStatus(id: string, status: string): Promise<Booking | undefined> {
-    const [booking] = await db
-      .update(bookings)
-      .set({ status, updatedAt: new Date() })
-      .where(eq(bookings.id, id))
-      .returning();
+    const [booking] = await db.update(bookings).set({ status }).where(eq(bookings.id, id)).returning();
     return booking;
   }
 
-  // Message operations
-  async getMessage(id: string): Promise<Message | undefined> {
-    const [message] = await db.select().from(messages).where(eq(messages.id, id));
-    return message;
+  // Messages
+  async getConversations(userId: string): Promise<{ userId: string, username: string, lastMessage: Message }[]> {
+    // This is a simplified version. In a real app, you'd use a more complex join
+    const allMessages = await db.select().from(messages).where(
+      or(eq(messages.senderId, userId), eq(messages.receiverId, userId))
+    ).orderBy(desc(messages.createdAt));
+    
+    const conversationMap = new Map<string, Message>();
+    
+    for (const msg of allMessages) {
+      const otherId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+      if (!conversationMap.has(otherId)) {
+        conversationMap.set(otherId, msg);
+      }
+    }
+    
+    const result = [];
+    for (const [otherId, lastMessage] of conversationMap.entries()) {
+      const otherUser = await this.getUser(otherId);
+      if (otherUser) {
+        result.push({
+          userId: otherId,
+          username: otherUser.username || "Unknown User",
+          lastMessage
+        });
+      }
+    }
+    
+    return result;
   }
 
-  async getConversationMessages(conversationId: string): Promise<(Message & { sender?: User; receiver?: User })[]> {
-    const results = await db
-      .select()
-      .from(messages)
-      .leftJoin(users, eq(messages.senderId, users.id))
+  async getConversationMessages(conversationId: string): Promise<Message[]> {
+    return await db.select().from(messages)
       .where(eq(messages.conversationId, conversationId))
       .orderBy(messages.createdAt);
-    
-    return results.map(r => ({
-      ...r.messages,
-      sender: r.users || undefined,
-    })) as any;
   }
 
-  async getConversations(userId: string): Promise<any[]> {
-    // This is a simplified version - in production you'd want a more optimized query
-    const userMessages = await db
-      .select()
-      .from(messages)
-      .where(or(eq(messages.senderId, userId), eq(messages.receiverId, userId)))
-      .orderBy(desc(messages.createdAt));
-    
-    // Group by conversation
-    const conversationsMap = new Map();
-    for (const msg of userMessages) {
-      if (!conversationsMap.has(msg.conversationId)) {
-        conversationsMap.set(msg.conversationId, {
-          conversationId: msg.conversationId,
-          lastMessage: msg,
-          otherUserId: msg.senderId === userId ? msg.receiverId : msg.senderId,
-        });
-      }
-    }
-    
-    // Fetch other users
-    const conversations = [];
-    for (const conv of conversationsMap.values()) {
-      const [otherUser] = await db.select().from(users).where(eq(users.id, conv.otherUserId));
-      if (otherUser) {
-        conversations.push({
-          ...conv,
-          otherUser,
-          unreadCount: 0, // Simplified
-        });
-      }
-    }
-    
-    return conversations;
-  }
-
-  async createMessage(messageData: InsertMessage): Promise<Message> {
-    const id = randomUUID();
-    const [message] = await db.insert(messages).values({ id, ...messageData }).returning();
+  async createMessage(insertMessage: InsertMessage): Promise<Message> {
+    const [message] = await db.insert(messages).values(insertMessage).returning();
     return message;
   }
 
-  async markMessageAsRead(id: string): Promise<boolean> {
-    await db.update(messages).set({ isRead: true }).where(eq(messages.id, id));
-    return true;
+  // Ratings
+  async getUserRatings(userId: string): Promise<Rating[]> {
+    return await db.select().from(ratings).where(eq(ratings.ratedUserId, userId));
   }
 
-  // Rating operations
-  async getRating(id: string): Promise<Rating | undefined> {
-    const [rating] = await db.select().from(ratings).where(eq(ratings.id, id));
-    return rating;
-  }
-
-  async getUserRatings(userId: string): Promise<(Rating & { rater?: User })[]> {
-    const results = await db
-      .select()
-      .from(ratings)
-      .leftJoin(users, eq(ratings.raterId, users.id))
-      .where(eq(ratings.ratedUserId, userId))
-      .orderBy(desc(ratings.createdAt));
+  async createRating(insertRating: InsertRating): Promise<Rating> {
+    const [rating] = await db.insert(ratings).values(insertRating).returning();
     
-    return results.map(r => ({
-      ...r.ratings,
-      rater: r.users || undefined,
-    }));
-  }
-
-  async createRating(ratingData: InsertRating): Promise<Rating> {
-    const id = randomUUID();
-    const [rating] = await db.insert(ratings).values({ id, ...ratingData }).returning();
+    // Update user average rating
+    const userRatings = await this.getUserRatings(insertRating.ratedUserId);
+    const total = userRatings.reduce((sum, r) => sum + r.rating, 0);
+    const average = total / userRatings.length;
     
-    // Update user's rating
-    await this.updateUserRating(ratingData.ratedUserId);
+    await this.updateUser(insertRating.ratedUserId, {
+      rating: average,
+      totalRatings: userRatings.length
+    });
     
     return rating;
   }
 
-  async updateUserRating(userId: string): Promise<void> {
-    const userRatings = await db
-      .select()
-      .from(ratings)
-      .where(eq(ratings.ratedUserId, userId));
+  // Wishlist
+  async getWishlistByUser(userId: string): Promise<(WishlistItem & { item: Item })[]> {
+    const wishlistItems = await db.select().from(wishlist).where(eq(wishlist.userId, userId));
+    const result = [];
     
-    const avgRating = userRatings.reduce((sum, r) => sum + r.rating, 0) / userRatings.length;
+    for (const w of wishlistItems) {
+      const item = await this.getItem(w.itemId);
+      if (item) {
+        result.push({ ...w, item });
+      }
+    }
     
-    await db
-      .update(users)
-      .set({ 
-        rating: avgRating,
-        totalRatings: userRatings.length,
-      })
-      .where(eq(users.id, userId));
-  }
-
-  // Wishlist operations
-  async getWishlistByUser(userId: string): Promise<(WishlistItem & { item?: Item & { owner?: User } })[]> {
-    const results = await db
-      .select()
-      .from(wishlist)
-      .leftJoin(items, eq(wishlist.itemId, items.id))
-      .leftJoin(users, eq(items.ownerId, users.id))
-      .where(eq(wishlist.userId, userId))
-      .orderBy(desc(wishlist.createdAt));
-    
-    return results.map(r => ({
-      ...r.wishlist,
-      item: r.items ? {
-        ...r.items,
-        owner: r.users || undefined,
-      } : undefined,
-    }));
+    return result;
   }
 
   async checkWishlist(userId: string, itemId: string): Promise<boolean> {
-    const [result] = await db
-      .select()
-      .from(wishlist)
-      .where(and(eq(wishlist.userId, userId), eq(wishlist.itemId, itemId)));
-    return !!result;
+    const [entry] = await db.select().from(wishlist).where(
+      and(eq(wishlist.userId, userId), eq(wishlist.itemId, itemId))
+    );
+    return !!entry;
   }
 
-  async addToWishlist(wishlistData: InsertWishlist): Promise<WishlistItem> {
-    const id = randomUUID();
-    const [item] = await db.insert(wishlist).values({ id, ...wishlistData }).returning();
-    return item;
+  async addToWishlist(insertWishlist: InsertWishlist): Promise<WishlistItem> {
+    const [entry] = await db.insert(wishlist).values(insertWishlist).returning();
+    return entry;
   }
 
-  async removeFromWishlist(userId: string, itemId: string): Promise<boolean> {
-    await db
-      .delete(wishlist)
-      .where(and(eq(wishlist.userId, userId), eq(wishlist.itemId, itemId)));
-    return true;
+  async removeFromWishlist(userId: string, itemId: string): Promise<void> {
+    await db.delete(wishlist).where(
+      and(eq(wishlist.userId, userId), eq(wishlist.itemId, itemId))
+    );
   }
 
-  async updateWishlistAlerts(userId: string, itemId: string, alertsEnabled: boolean): Promise<boolean> {
-    await db
-      .update(wishlist)
+  async updateWishlistAlerts(userId: string, itemId: string, alertsEnabled: boolean): Promise<void> {
+    await db.update(wishlist)
       .set({ alertsEnabled })
       .where(and(eq(wishlist.userId, userId), eq(wishlist.itemId, itemId)));
-    return true;
   }
 
-  // Impact operations
+  // Impact
   async getUserImpactStats(userId: string): Promise<ImpactStats | undefined> {
-    const [stats] = await db
-      .select()
-      .from(impactStats)
-      .where(eq(impactStats.userId, userId));
-    
-    if (!stats) {
-      // Create default stats
-      const id = randomUUID();
-      const [newStats] = await db
-        .insert(impactStats)
-        .values({ id, userId, itemsReused: 0, co2Saved: 0, wastePrevented: 0 })
-        .returning();
-      return newStats;
-    }
-    
+    const [stats] = await db.select().from(impactStats).where(eq(impactStats.userId, userId));
     return stats;
-  }
-
-  async updateImpactStats(userId: string, updates: Partial<Omit<ImpactStats, 'id' | 'userId'>>): Promise<void> {
-    const stats = await this.getUserImpactStats(userId);
-    if (stats) {
-      await db
-        .update(impactStats)
-        .set({ ...updates, updatedAt: new Date() })
-        .where(eq(impactStats.userId, userId));
-    }
   }
 }
 

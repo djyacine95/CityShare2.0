@@ -1,5 +1,4 @@
-// Based on Replit Auth blueprint
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -16,26 +15,38 @@ import Wishlist from "@/pages/wishlist";
 import Impact from "@/pages/impact";
 import CreateItem from "@/pages/create-item";
 import NotFound from "@/pages/not-found";
+import AuthPage from "@/pages/auth"; // <--- NOW THIS EXISTS!
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  }
+
+  const ProtectedRoute = ({ component: Component, ...rest }: any) => (
+    <Route {...rest}>
+      {isAuthenticated ? <Component /> : (setLocation("/auth"), null)}
+    </Route>
+  );
 
   return (
     <Switch>
-      {isLoading || !isAuthenticated ? (
-        <Route path="/" component={Landing} />
-      ) : (
-        <>
-          <Route path="/" component={Home} />
-          <Route path="/browse" component={Browse} />
-          <Route path="/items/new" component={CreateItem} />
-          <Route path="/items/:id" component={ItemDetail} />
-          <Route path="/profile" component={Profile} />
-          <Route path="/messages" component={Messages} />
-          <Route path="/wishlist" component={Wishlist} />
-          <Route path="/impact" component={Impact} />
-        </>
-      )}
+      <Route path="/" component={isAuthenticated ? Home : Landing} />
+      
+      {/* THIS IS THE FIX: Route /auth to the visual Login Page */}
+      <Route path="/auth" component={AuthPage} />
+      <Route path="/login" component={AuthPage} />
+
+      <ProtectedRoute path="/browse" component={Browse} />
+      <ProtectedRoute path="/items/new" component={CreateItem} />
+      <ProtectedRoute path="/items/:id" component={ItemDetail} />
+      <ProtectedRoute path="/profile" component={Profile} />
+      <ProtectedRoute path="/messages" component={Messages} />
+      <ProtectedRoute path="/wishlist" component={Wishlist} />
+      <ProtectedRoute path="/impact" component={Impact} />
+
       <Route component={NotFound} />
     </Switch>
   );
@@ -43,7 +54,6 @@ function Router() {
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
-
   return (
     <>
       {!isLoading && isAuthenticated && <Header />}

@@ -1,163 +1,108 @@
-// Based on Replit Auth blueprint
-import * as client from "openid-client";
-import { Strategy, type VerifyFunction } from "openid-client/passport";
-
-import passport from "passport";
+import { type Express, type Request, type Response, type NextFunction } from "express";
 import session from "express-session";
-import type { Express, RequestHandler } from "express";
-import memoize from "memoizee";
-import connectPg from "connect-pg-simple";
-import { storage } from "./storage";
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
+import { db } from "./db";
+import { users } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import MemoryStore from "memorystore";
 
-const getOidcConfig = memoize(
-  async () => {
-    return await client.discovery(
-      new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
-    );
-  },
-  { maxAge: 3600 * 1000 }
-);
+export function setupAuth(app: Express) {
+  // 1. Setup Session
+  const SessionStore = MemoryStore(session);
+  app.use(
+    session({
+      secret: "secret-key",
+      resave: false,
+      saveUninitialized: false,
+      store: new SessionStore({ checkPeriod: 86400000 }),
+      cookie: { secure: false },
+    })
+  );
 
-export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
-  const pgStore = connectPg(session);
-  const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
-    ttl: sessionTtl,
-    tableName: "sessions",
-  });
-  return session({
-    secret: process.env.SESSION_SECRET!,
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: true,
-      maxAge: sessionTtl,
-    },
-  });
-}
-
-function updateUserSession(
-  user: any,
-  tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers
-) {
-  user.claims = tokens.claims();
-  user.access_token = tokens.access_token;
-  user.refresh_token = tokens.refresh_token;
-  user.expires_at = user.claims?.exp;
-}
-
-async function upsertUser(
-  claims: any,
-) {
-  await storage.upsertUser({
-    id: claims["sub"],
-    email: claims["email"],
-    firstName: claims["first_name"],
-    lastName: claims["last_name"],
-    profileImageUrl: claims["profile_image_url"],
-  });
-}
-
-export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
-  app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
 
-  const config = await getOidcConfig();
+  // 2. Configure Passport (The Security Guard)
+  passport.use(
+    new LocalStrategy(async (username, password, done) => {
+      try {
+        const [user] = await db.select().from(users).where(eq(users.username, username));
+        if (!user) {
+          return done(null, false, { message: "Incorrect username." });
+        }
+        if (user.password !== password) {
+          return done(null, false, { message: "Incorrect password." });
+        }
+        return done(null, user);
+      } catch (err) {
+        return done(err);
+      }
+    })
+  );
 
-  const verify: VerifyFunction = async (
-    tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
-    verified: passport.AuthenticateCallback
-  ) => {
-    const user = {};
-    updateUserSession(user, tokens);
-    await upsertUser(tokens.claims());
-    verified(null, user);
-  };
+  passport.serializeUser((user: any, done) => done(null, user.id));
+  passport.deserializeUser(async (id: number, done) => {
+    try {
+      const [user] = await db.select().from(users).where(eq(users.id, id));
+      done(null, user);
+    } catch (err) {
+      done(err);
+    }
+  });
 
-  // Keep track of registered strategies
-  const registeredStrategies = new Set<string>();
+  // -------------------------------------------------------------------
+  // 3. API Routes (The "Safety Net" - Listen to ALL variations)
+  // -------------------------------------------------------------------
 
-  // Helper function to ensure strategy exists for a domain
-  const ensureStrategy = (domain: string) => {
-    const strategyName = `replitauth:${domain}`;
-    if (!registeredStrategies.has(strategyName)) {
-      const strategy = new Strategy(
-        {
-          name: strategyName,
-          config,
-          scope: "openid email profile offline_access",
-          callbackURL: `https://${domain}/api/callback`,
-        },
-        verify,
-      );
-      passport.use(strategy);
-      registeredStrategies.add(strategyName);
+  // STATUS: Check if logged in
+  app.get("/api/auth/user", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Not logged in" });
+    res.json(req.user);
+  });
+
+  // LOGIN: Listen to BOTH common addresses
+  const handleLogin = (req: Request, res: Response) => res.status(200).json(req.user);
+  
+  app.post("/api/login", passport.authenticate("local"), handleLogin);       // Option A
+  app.post("/api/auth/login", passport.authenticate("local"), handleLogin);  // Option B
+
+  // REGISTER: Listen to BOTH common addresses
+  const handleRegister = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const existingUser = await db.select().from(users).where(eq(users.username, req.body.username));
+      if (existingUser.length > 0) return res.status(400).send("Username already exists");
+
+      const [newUser] = await db.insert(users).values({
+        username: req.body.username,
+        password: req.body.password,
+        isAdmin: false,
+      }).returning();
+
+      req.login(newUser, (err) => {
+        if (err) return next(err);
+        return res.json(newUser);
+      });
+    } catch (error) {
+      next(error);
     }
   };
 
-  passport.serializeUser((user: Express.User, cb) => cb(null, user));
-  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
+  app.post("/api/register", handleRegister);      // Option A
+  app.post("/api/auth/register", handleRegister); // Option B
 
-  app.get("/api/login", (req, res, next) => {
-    ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      prompt: "login consent",
-      scope: ["openid", "email", "profile", "offline_access"],
-    })(req, res, next);
-  });
-
-  app.get("/api/callback", (req, res, next) => {
-    ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      successReturnToOrRedirect: "/",
-      failureRedirect: "/api/login",
-    })(req, res, next);
-  });
-
-  app.get("/api/logout", (req, res) => {
-    req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+  // LOGOUT
+  app.post("/api/logout", (req, res, next) => {
+    req.logout((err) => {
+      if (err) return next(err);
+      res.sendStatus(200);
     });
   });
+
+  console.log("✅ Auth Routes initialized (Listening on /api/login AND /api/auth/login)");
 }
 
-export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  const user = req.user as any;
-
-  if (!req.isAuthenticated() || !user.expires_at) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (now <= user.expires_at) {
-    return next();
-  }
-
-  const refreshToken = user.refresh_token;
-  if (!refreshToken) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
-  }
-
-  try {
-    const config = await getOidcConfig();
-    const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
-    updateUserSession(user, tokenResponse);
-    return next();
-  } catch (error) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
-  }
-};
+export function isAuthenticated(req: Request, res: Response, next: NextFunction) {
+  if (req.isAuthenticated()) return next();
+  res.status(401).json({ message: "Unauthorized" });
+}

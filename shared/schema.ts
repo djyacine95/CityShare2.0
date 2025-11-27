@@ -9,11 +9,12 @@ import {
   integer,
   boolean,
   real,
+  serial, 
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Session storage table (required for Replit Auth)
+// Session storage table (required for Express Session)
 export const sessions = pgTable(
   "sessions",
   {
@@ -24,10 +25,15 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)],
 );
 
-// User storage table (required for Replit Auth, extended for CityShare)
+// User storage table 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").unique(),
+  // --- ADDED THESE 3 COLUMNS TO FIX THE ERROR ---
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  isAdmin: boolean("is_admin").default(false),
+  // ----------------------------------------------
+  email: varchar("email"), // Removed unique constraint temporarily to avoid conflicts if empty
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
@@ -54,8 +60,8 @@ export const items = pgTable("items", {
   category: varchar("category", { length: 100 }).notNull(),
   images: text("images").array().notNull().default(sql`ARRAY[]::text[]`),
   location: varchar("location").notNull(),
-  distance: real("distance"), // in miles, calculated from user location
-  status: varchar("status").notNull().default("available"), // available, borrowed, pending
+  distance: real("distance"), 
+  status: varchar("status").notNull().default("available"), 
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -79,7 +85,7 @@ export const bookings = pgTable("bookings", {
   ownerId: varchar("owner_id").notNull().references(() => users.id),
   pickupDate: timestamp("pickup_date").notNull(),
   returnDate: timestamp("return_date").notNull(),
-  status: varchar("status").notNull().default("pending"), // pending, confirmed, active, completed, cancelled
+  status: varchar("status").notNull().default("pending"), 
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -121,7 +127,7 @@ export const ratings = pgTable("ratings", {
   raterId: varchar("rater_id").notNull().references(() => users.id),
   ratedUserId: varchar("rated_user_id").notNull().references(() => users.id),
   bookingId: varchar("booking_id").notNull().references(() => bookings.id),
-  rating: integer("rating").notNull(), // 1-5
+  rating: integer("rating").notNull(), 
   review: text("review"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -156,8 +162,8 @@ export const impactStats = pgTable("impact_stats", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
   itemsReused: integer("items_reused").default(0),
-  co2Saved: real("co2_saved").default(0), // in kg
-  wastePrevented: real("waste_prevented").default(0), // in kg
+  co2Saved: real("co2_saved").default(0), 
+  wastePrevented: real("waste_prevented").default(0), 
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
