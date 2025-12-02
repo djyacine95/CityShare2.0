@@ -76,3 +76,8 @@ CityShare is a community web app that lets people borrow, lend, and share items 
 - Lucide React icons
 - ESBuild and TypeScript for building and typing
 - Static assets served from a public folder
+
+## Build Instructions
+Requires Node version 21.2+
+1. npm i
+2. npm run dev
