@@ -77,6 +77,12 @@ CityShare is a community web app that lets people borrow, lend, and share items 
 - ESBuild and TypeScript for building and typing
 - Static assets served from a public folder
 
+## Installation Requirements
+Make sure the following are installed before running CityShare:
+1. Node.js v21.2+
+2. npm 10+ (comes with Node)
+3. PostgreSQL 14+
+
 ## Build Instructions
 Requires Node version 21.2+
 1. npm i
